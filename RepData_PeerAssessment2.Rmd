@@ -1,0 +1,135 @@
+---
+title: "Reproducible Research: Peer Assessment 2"
+output: 
+  html_document:
+    keep_md: true
+---
+
+<style>
+ th,td{
+   padding:2px 5px 2px 5px;
+ }
+</style>
+
+## Introduction
+For Assignment 2 of this course, we are looking at Storm Data from NOAA and The National Weather Service. We will be examining different storm events, 
+specifically their economic effects and the casualities caused. The data ranges from 1950 to 2011, and includes many different weather events.
+More information can be found at https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf.
+
+## Import libraries
+```{r libraries, echo=TRUE, message=FALSE}
+require(dtplyr)
+require(ggplot2)
+require(xtable)
+```
+
+## Data Processing
+First, the data is downloaded, then read into a data table. read.csv reads directly from the compressed file.
+```{r load, echo=TRUE}
+## Set local filename for dataset
+filename <- 'StormData.csv.bz2'
+
+## Download and unzip the dataset
+if (!file.exists(filename)) {
+  fileURL <- 'https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2'
+  download.file(fileURL, filename)
+}
+
+if (!exists('StormData')) StormData <- tbl_dt(read.csv(filename))
+```
+
+## Results
+### Health Effects
+The first analysis will be to find which events are the most destructive in terms of population health. We can look at this three ways.
+First, we will look at which events cause the most fatalities.
+```{r fatalities, echo=TRUE, results='asis'}
+## Group sum of fatalities by event type
+fatalities_by_event <- StormData[,.(fatalities=as.integer(sum(FATALITIES))), by=EVTYPE]
+
+## Order the list by descending number of fatalities
+fatalities_by_event <- fatalities_by_event[order(-fatalities)]
+
+## Print the first 20 rows of the new table
+names(fatalities_by_event) <- c('Event Type', 'Total Fatalities')
+print(xtable(fatalities_by_event[1:20]), type='html')
+```
+
+Now, we look at events that cause the most injuries. Injuries may not be as serious as fatalities, but they do have a greater drain on 
+the economy, as the injured take up hospital beds, and doctors must be paid for their service.
+```{r injuries, echo=TRUE, results='asis'}
+## Group sum of injuries by event type
+injuries_by_event <- StormData[,.(injuries=as.integer(sum(INJURIES))), by=EVTYPE]
+
+## Order the list by descending number of injuries
+injuries_by_event <- injuries_by_event[order(-injuries)]
+
+## Print the first 20 rows of the new table
+names(injuries_by_event) <- c('Event Type', 'Total Injuries')
+print(xtable(injuries_by_event[1:20]), type='html')
+```
+
+Finally, we sum injuries and fatalities to look at total casualty numbers.
+```{r casualties, echo=TRUE, results='asis'}
+## Group sum of injuries and fatalities by event type
+casualties_by_event <- StormData[,.(casualties=as.integer(sum(INJURIES)+sum(FATALITIES))), by=EVTYPE]
+
+## Order the list by descending number of injuries
+casualties_by_event <- casualties_by_event[order(-casualties)]
+
+## Print the first 20 rows of the new table
+names(casualties_by_event) <- c('Event Type', 'Total Casualties')
+print(xtable(casualties_by_event[1:20]), type='html')
+```
+
+### Economic Effects
+This is a tricky thing to analyze. In examining the data, I've discovered what can only be OCR errors in the data. The PROPDMGEXP field 
+contains a letter that represents the multiplication of PROPDMG (e.g. K=1,000, M=1,000,000...). However, there are some odd values recorded. 
+For example, there are 28 instances of '5' appearing in the PROPDMGEXP field. After some digging, I found that the OCR was scanning 
+to the first digit after the decimal point, then putting the next character in the PROPDMGEXP field, so a '2.5' in the PROPDMG field, 
+and a '5' in the PROPDMGEXP field would represent 2.55 times some now unknown multiplier. Another peculiarity is the 'H' multiplier. 
+This is not an OCR error, as it shows in the original document, but there is no explanation of what it means (My guess is it means 100). 
+My solution here will be to remove all values except those with a DMGEXP (PROP, and CROP) of 'B', 'K', 'm', and 'M'.
+
+First we'll take a look at just property damage.
+```{r propdmg, echo=TRUE, results='asis'}
+
+PropDmg <- StormData[PROPDMGEXP %in% c('B', 'K', 'm', 'M')]
+PropDmg <- PropDmg[PROPDMGEXP=='m', PROPDMGEXP:='M']
+PropDmg$PROPDMGEXP <- factor(PropDmg$PROPDMGEXP, levels=c('K', 'M', 'B'), labels=c(1000, 1000000, 1000000000))
+PropDmg <- PropDmg[ ,PROPDMGTOT := PROPDMG * as.numeric(levels(PROPDMGEXP))[PROPDMGEXP]]
+
+PropDmg_by_event <- PropDmg[, .(TotPropDmg=sum(PROPDMGTOT)), by=EVTYPE]
+PropDmg_by_event <- PropDmg_by_event[order(-TotPropDmg)]
+PropDmg_by_event <- PropDmg_by_event[,TotPropDmgStr:=paste0('$', formatC(TotPropDmg, format="f", digits=2, big.mark=","))]
+names(PropDmg_by_event) <- c('Event Type', 'TotPropDmg', 'Total Property Damage')
+
+print(xtable(PropDmg_by_event[1:20, .(`Event Type`, `Total Property Damage`)]), type='html')
+```
+
+Next, we can look at crop damage.
+```{r cropdmg, echo=TRUE, results='asis'}
+
+CropDmg <- StormData[CROPDMGEXP %in% c('B', 'k', 'K', 'm', 'M')]
+CropDmg <- CropDmg[CROPDMGEXP=='m', CROPDMGEXP:='M']
+CropDmg <- CropDmg[CROPDMGEXP=='k', CROPDMGEXP:='K']
+CropDmg$CROPDMGEXP <- factor(CropDmg$CROPDMGEXP, levels=c('K', 'M', 'B'), labels=c(1000, 1000000, 1000000000))
+CropDmg <- CropDmg[ ,CROPDMGTOT := CROPDMG * as.numeric(levels(CROPDMGEXP))[CROPDMGEXP]]
+
+CropDmg_by_event <- CropDmg[, .(TotCropDmg=sum(CROPDMGTOT)), by=EVTYPE]
+CropDmg_by_event <- CropDmg_by_event[order(-TotCropDmg)]
+CropDmg_by_event <- CropDmg_by_event[,TotCropDmgStr:=paste0('$', formatC(TotCropDmg, format="f", digits=2, big.mark=","))]
+names(CropDmg_by_event) <- c('Event Type', 'TotCropDmg', 'Total Crop Damage')
+
+print(xtable(CropDmg_by_event[1:20, .(`Event Type`, `Total Crop Damage`)]), type='html')
+```
+
+Last, we examine total damages.
+```{r totdmg, echo=TRUE, results='asis'}
+TotDmg <- PropDmg_by_event[CropDmg_by_event, on='Event Type']
+TotDmg <- TotDmg[, TotDamages := TotPropDmg + TotCropDmg]
+TotDmg <- TotDmg[order(-TotDamages)]
+TotDmg <- TotDmg[, 'Total Damages' := paste0('$', formatC(TotDamages, format="f", digits=2, big.mark=","))]
+
+print(xtable(TotDmg[1:20, .(`Event Type`, `Total Damages`)]), type='html')
+```
+
